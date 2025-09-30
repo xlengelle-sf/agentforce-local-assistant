@@ -1,4 +1,4 @@
-"""Code generator for Lightning Types"""
+"""Code generator for Lightning Types with field type awareness"""
 import json
 from pathlib import Path
 from rich.console import Console
@@ -61,80 +61,138 @@ class CodeGenerator:
         if verbose:
             console.print("[dim]  → Generating LWC component...[/dim]")
         
-        # Get examples from documentation
-        context = self.rag.get_relevant_context(
-            f"Lightning Web Component example {spec['styling']} renderer",
-            max_length=2000,
-            verbose=False
-        )
-        
         files = {}
         
         # Generate JS
-        files[f"{spec['lwc_component_name']}.js"] = self._generate_lwc_js(spec, context, verbose)
+        files[f"{spec['lwc_component_name']}.js"] = self._generate_lwc_js_enhanced(spec, verbose)
         
         # Generate HTML
-        files[f"{spec['lwc_component_name']}.html"] = self._generate_lwc_html(spec, context, verbose)
+        files[f"{spec['lwc_component_name']}.html"] = self._generate_lwc_html_enhanced(spec, verbose)
         
         # Generate meta.xml
         files[f"{spec['lwc_component_name']}.js-meta.xml"] = self._generate_lwc_meta(spec, verbose)
         
         return files
     
-    def _generate_lwc_js(self, spec, context, verbose):
-        """Generate LWC JavaScript file"""
-        prompt = f"""Generate a Lightning Web Component JavaScript file for this specification:
-
-{json.dumps(spec, indent=2)}
-
-Documentation context:
-{context}
-
-Requirements:
-1. Import LightningElement and api from 'lwc'
-2. Create @api properties for each field: {', '.join(spec['fields'])}
-3. Add getter methods to format the data
-4. Include any computed properties needed for {spec['features']}
-5. Use SLDS styling approach
-
-Return ONLY the JavaScript code, no explanations.
-"""
+    def _generate_lwc_js_enhanced(self, spec, verbose):
+        """Generate enhanced LWC JavaScript with proper type handling"""
+        # Build @api properties
+        api_properties = []
+        getters = []
         
-        js_code = self.llm.generate(
-            prompt,
-            system="You are an expert Lightning Web Component developer. Provide clean, production-ready code.",
-            verbose=verbose
-        )
+        for field in spec['fields']:
+            field_name = field['name']
+            field_type = field['type']
+            
+            # Add @api property
+            if field_type == 'reference' and field.get('relationshipName'):
+                # For relationships, we need both the ID and the relationship
+                api_properties.append(f"    @api {field_name};")
+                api_properties.append(f"    @api {field['relationshipName']}__r;")
+                
+                # Add getter for relationship name
+                getters.append(f"""    get {field_name.lower()}Name() {{
+        return this.{field['relationshipName']}__r?.Name || '';
+    }}""")
+            else:
+                api_properties.append(f"    @api {field_name};")
+            
+            # Add formatting getters based on type
+            if field_type == 'currency':
+                getters.append(f"""    get formatted{field_name}() {{
+        return this.{field_name} ? new Intl.NumberFormat('en-US', {{
+            style: 'currency',
+            currency: 'USD'
+        }}).format(this.{field_name}) : '';
+    }}""")
+            
+            elif field_type in ['date', 'datetime']:
+                getters.append(f"""    get formatted{field_name}() {{
+        if (!this.{field_name}) return '';
+        const date = new Date(this.{field_name});
+        return new Intl.DateTimeFormat('en-US', {{
+            {'dateStyle: \'medium\', timeStyle: \'short\'' if field_type == 'datetime' else 'dateStyle: \'medium\''}
+        }}).format(date);
+    }}""")
         
-        return js_code if js_code else self._get_fallback_js(spec)
+        # Add display title getter
+        title_field = next((f['name'] for f in spec['fields'] if 'name' in f['name'].lower() or f == spec['fields'][0]), spec['fields'][0]['name'])
+        getters.append(f"""    get displayTitle() {{
+        return this.{title_field} || 'Untitled';
+    }}""")
+        
+        js_code = f"""import {{ LightningElement, api }} from 'lwc';
+
+export default class {spec['lwc_component_name'].capitalize()} extends LightningElement {{
+{chr(10).join(api_properties)}
     
-    def _generate_lwc_html(self, spec, context, verbose):
-        """Generate LWC HTML template"""
-        prompt = f"""Generate a Lightning Web Component HTML template for this specification:
-
-{json.dumps(spec, indent=2)}
-
-Documentation context:
-{context}
-
-Requirements:
-1. Use <template> wrapper
-2. Use lightning-card for main container
-3. Display fields: {', '.join(spec['fields'])}
-4. Implement {spec['styling']} layout style
-5. Include features: {spec['features']}
-6. Use SLDS utility classes
-
-Return ONLY the HTML code, no explanations.
+{chr(10).join(getters)}
+}}
 """
         
-        html_code = self.llm.generate(
-            prompt,
-            system="You are an expert Lightning Web Component developer. Provide clean, production-ready HTML.",
-            verbose=verbose
-        )
+        return js_code
+    
+    def _generate_lwc_html_enhanced(self, spec, verbose):
+        """Generate enhanced LWC HTML with proper field rendering"""
+        field_handlers = spec.get('field_handlers', {})
         
-        return html_code if html_code else self._get_fallback_html(spec)
+        # Build field sections
+        field_sections = []
+        
+        for field in spec['fields']:
+            field_name = field['name']
+            field_label = field['label']
+            handler = field_handlers.get(field_name, {'component': 'lightning-formatted-text'})
+            
+            # Determine the display component
+            if handler['component'] == 'lightning-formatted-name':
+                field_display = f"{{{{ {handler['property']} }}}}"
+            elif handler['component'] == 'lightning-badge':
+                field_display = f'''<lightning-badge label="{{{{{field_name}}}}}" variant="inverse"></lightning-badge>'''
+            elif handler['component'] == 'lightning-formatted-date-time':
+                field_display = f'''<lightning-formatted-date-time value="{{{{{field_name}}}}}"></lightning-formatted-date-time>'''
+            elif handler['component'] == 'lightning-formatted-number' and handler.get('format') == 'currency':
+                field_display = f'''<lightning-formatted-number value="{{{{{field_name}}}}}" format-style="currency" currency-code="USD"></lightning-formatted-number>'''
+            elif handler['component'] == 'lightning-formatted-email':
+                field_display = f'''<lightning-formatted-email value="{{{{{field_name}}}}}"></lightning-formatted-email>'''
+            elif handler['component'] == 'lightning-formatted-phone':
+                field_display = f'''<lightning-formatted-phone value="{{{{{field_name}}}}}"></lightning-formatted-phone>'''
+            elif handler['component'] == 'lightning-formatted-url':
+                field_display = f'''<lightning-formatted-url value="{{{{{field_name}}}}}" target="_blank"></lightning-formatted-url>'''
+            else:
+                field_display = f"{{{{ {field_name} }}}}"
+            
+            field_section = f"""                <div class="slds-col slds-size_1-of-1 slds-medium-size_1-of-2 slds-p-vertical_x-small">
+                    <div class="slds-text-title_caps">{field_label}</div>
+                    <div class="slds-text-body_regular">{field_display}</div>
+                </div>"""
+            
+            field_sections.append(field_section)
+        
+        html_template = f"""<template>
+    <lightning-card title="{{{{displayTitle}}}}" icon-name="standard:record">
+        <div slot="actions">
+            <lightning-button-group>
+                <lightning-button label="View Details" variant="brand"></lightning-button>
+            </lightning-button-group>
+        </div>
+        
+        <div class="slds-p-around_medium">
+            <div class="slds-grid slds-wrap slds-gutters">
+{chr(10).join(field_sections)}
+            </div>
+        </div>
+        
+        <div slot="footer">
+            <div class="slds-text-align_center slds-text-body_small slds-text-color_weak">
+                {spec['object_metadata']['label']}
+            </div>
+        </div>
+    </lightning-card>
+</template>
+"""
+        
+        return html_template
     
     def _generate_lwc_meta(self, spec, verbose):
         """Generate LWC meta.xml file"""
@@ -148,39 +206,3 @@ Return ONLY the HTML code, no explanations.
 </LightningComponentBundle>
 """
         return meta
-    
-    def _get_fallback_js(self, spec):
-        """Fallback JavaScript template"""
-        fields_code = '\n    '.join([f"@api {field};" for field in spec['fields']])
-        
-        return f"""import {{ LightningElement, api }} from 'lwc';
-
-export default class {spec['lwc_component_name'].capitalize()} extends LightningElement {{
-    {fields_code}
-    
-    get displayTitle() {{
-        return this.{spec['fields'][0]} || 'Untitled';
-    }}
-}}
-"""
-    
-    def _get_fallback_html(self, spec):
-        """Fallback HTML template"""
-        fields_html = '\n'.join([
-            f"""                <div class="slds-col slds-size_1-of-2">
-                    <div class="slds-text-title_caps">{field.replace('__c', '').replace('_', ' ')}</div>
-                    <div class="slds-text-body_regular">{{{field}}}</div>
-                </div>"""
-            for field in spec['fields']
-        ])
-        
-        return f"""<template>
-    <lightning-card title="{{displayTitle}}">
-        <div class="slds-p-around_medium">
-            <div class="slds-grid slds-wrap slds-gutters">
-{fields_html}
-            </div>
-        </div>
-    </lightning-card>
-</template>
-"""
