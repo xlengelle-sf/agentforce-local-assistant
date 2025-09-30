@@ -52,7 +52,7 @@ print_info() {
     echo -e "${BLUE}ℹ️  $1${NC}"
 }
 
-# Function to ask yes/no question
+# Function to ask yes/no question (bash 3.x compatible)
 ask_confirmation() {
     local question="$1"
     local default="${2:-y}"
@@ -72,7 +72,10 @@ ask_confirmation() {
             response="$default"
         fi
         
-        case "${response,,}" in
+        # Convert to lowercase using tr (bash 3.x compatible)
+        response=$(echo "$response" | tr '[:upper:]' '[:lower:]')
+        
+        case "$response" in
             y|yes|o|oui) return 0 ;;
             n|no|non) return 1 ;;
             *) echo -e "${RED}Réponse invalide. Utilisez Y ou N.${NC}" ;;
