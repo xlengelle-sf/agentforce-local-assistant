@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Project specific
+knowledge_base/raw_docs/*.html
+knowledge_base/processed/*.json
+projects/*/
+config/settings.json.backup
+*.log
+
+# Salesforce
+.sfdx/
+.sf/
+.forceignore
+
+# OS
+.DS_Store
+Thumbs.db
