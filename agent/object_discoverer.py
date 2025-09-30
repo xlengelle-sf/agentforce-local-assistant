@@ -7,6 +7,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich.columns import Columns
+from rich.prompt import Prompt
 
 console = Console()
 
@@ -387,3 +388,318 @@ No explanations, just the JSON array.
             for cache_file in self.cache_dir.glob("*.json"):
                 cache_file.unlink()
             console.print("[green]✅ All cache cleared[/green]")
+    
+    # ===== NEW INTERACTIVE METHODS =====
+    
+    def list_objects(self, org_alias, object_type='all', verbose=True):
+        """
+        List all Salesforce objects in the org
+        
+        Args:
+            org_alias: Target org alias
+            object_type: 'all', 'standard', or 'custom'
+            verbose: Print progress
+        
+        Returns:
+            List of object metadata dictionaries
+        """
+        if verbose:
+            console.print(f"[bold blue]🔍 Listing {object_type} objects from {org_alias}...[/bold blue]")
+        
+        try:
+            # Use sf sobject list command
+            result = subprocess.run(
+                ['sf', 'sobject', 'list', '--target-org', org_alias, '--sobject', 'all', '--json'],
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+            
+            if result.returncode != 0:
+                if verbose:
+                    console.print(f"[red]❌ Failed to list objects: {result.stderr}[/red]")
+                return []
+            
+            data = json.loads(result.stdout)
+            
+            if data['status'] != 0:
+                if verbose:
+                    console.print(f"[red]❌ Error: {data.get('message', 'Unknown error')}[/red]")
+                return []
+            
+            objects = data['result']
+            
+            # Filter by type
+            if object_type == 'standard':
+                objects = [obj for obj in objects if not obj.get('custom', False)]
+            elif object_type == 'custom':
+                objects = [obj for obj in objects if obj.get('custom', False)]
+            
+            if verbose:
+                console.print(f"[green]✅ Found {len(objects)} {object_type} objects[/green]")
+            
+            return objects
+        
+        except Exception as e:
+            if verbose:
+                console.print(f"[red]❌ Error listing objects: {e}[/red]")
+            return []
+    
+    def display_objects_table(self, objects, page=1, per_page=20):
+        """
+        Display objects in a paginated table
+        
+        Args:
+            objects: List of object metadata
+            page: Current page number (1-indexed)
+            per_page: Number of objects per page
+        
+        Returns:
+            Tuple of (start_idx, end_idx, total_pages)
+        """
+        total = len(objects)
+        total_pages = (total + per_page - 1) // per_page
+        start_idx = (page - 1) * per_page
+        end_idx = min(start_idx + per_page, total)
+        
+        page_objects = objects[start_idx:end_idx]
+        
+        table = Table(
+            title=f"Salesforce Objects (Page {page}/{total_pages})",
+            show_header=True,
+            header_style="bold magenta"
+        )
+        table.add_column("#", style="dim", width=4)
+        table.add_column("API Name", style="cyan", width=30)
+        table.add_column("Label", style="white", width=30)
+        table.add_column("Type", style="yellow", width=10)
+        table.add_column("Prefix", style="green", width=8)
+        
+        for idx, obj in enumerate(page_objects, start=start_idx + 1):
+            table.add_row(
+                str(idx),
+                obj.get('name', 'N/A'),
+                obj.get('label', 'N/A'),
+                "Custom" if obj.get('custom', False) else "Standard",
+                obj.get('keyPrefix', 'N/A')
+            )
+        
+        console.print(table)
+        console.print(f"\n[dim]Showing {start_idx + 1}-{end_idx} of {total} objects[/dim]")
+        
+        return start_idx, end_idx, total_pages
+    
+    def search_objects(self, objects, search_term):
+        """
+        Filter objects by search term
+        
+        Args:
+            objects: List of object metadata
+            search_term: Search string
+        
+        Returns:
+            Filtered list of objects
+        """
+        if not search_term:
+            return objects
+        
+        search_lower = search_term.lower()
+        
+        filtered = [
+            obj for obj in objects
+            if search_lower in obj.get('name', '').lower() or
+               search_lower in obj.get('label', '').lower()
+        ]
+        
+        return filtered
+    
+    def select_object_interactive(self, org_alias, verbose=True):
+        """
+        Interactive object selection with search and pagination
+        
+        Args:
+            org_alias: Target org alias
+            verbose: Print progress
+        
+        Returns:
+            Selected object name or None
+        """
+        # Get all objects
+        objects = self.list_objects(org_alias, object_type='all', verbose=verbose)
+        
+        if not objects:
+            console.print("[red]❌ No objects found[/red]")
+            return None
+        
+        # Sort alphabetically
+        objects.sort(key=lambda x: x.get('name', ''))
+        
+        current_objects = objects
+        current_page = 1
+        per_page = 20
+        
+        while True:
+            console.clear()
+            console.print("\n[bold cyan]╔══════════════════════════════════════════════════╗[/bold cyan]")
+            console.print("[bold cyan]║          Salesforce Object Selection            ║[/bold cyan]")
+            console.print("[bold cyan]╚══════════════════════════════════════════════════╝[/bold cyan]\n")
+            
+            # Display current page
+            self.display_objects_table(current_objects, page=current_page, per_page=per_page)
+            
+            # Show options
+            console.print("\n[bold]Options:[/bold]")
+            console.print("  • Type number to select object")
+            console.print("  • Type 's:keyword' to search")
+            console.print("  • Type 'n' for next page")
+            console.print("  • Type 'p' for previous page")
+            console.print("  • Type 'c' to show only custom objects")
+            console.print("  • Type 'all' to show all objects")
+            console.print("  • Type 'q' to quit")
+            
+            choice = Prompt.ask("\n[bold]Your choice[/bold]")
+            
+            if choice.lower() == 'q':
+                return None
+            elif choice.lower() == 'n':
+                total_pages = (len(current_objects) + per_page - 1) // per_page
+                if current_page < total_pages:
+                    current_page += 1
+            elif choice.lower() == 'p':
+                if current_page > 1:
+                    current_page -= 1
+            elif choice.lower() == 'c':
+                current_objects = [obj for obj in objects if obj.get('custom', False)]
+                current_page = 1
+                console.print(f"[green]Filtered to {len(current_objects)} custom objects[/green]")
+            elif choice.lower() == 'all':
+                current_objects = objects
+                current_page = 1
+                console.print(f"[green]Showing all {len(current_objects)} objects[/green]")
+            elif choice.lower().startswith('s:'):
+                search_term = choice[2:].strip()
+                current_objects = self.search_objects(objects, search_term)
+                current_page = 1
+                console.print(f"[green]Found {len(current_objects)} matching objects[/green]")
+            elif choice.isdigit():
+                idx = int(choice) - 1
+                if 0 <= idx < len(current_objects):
+                    selected = current_objects[idx]
+                    return selected.get('name')
+                else:
+                    console.print("[red]Invalid selection[/red]")
+                    Prompt.ask("Press Enter to continue")
+    
+    def select_fields_interactive(self, metadata, llm_client=None, verbose=True):
+        """
+        Interactive field selection with AI recommendations
+        
+        Args:
+            metadata: Object metadata from discover_object()
+            llm_client: Optional LLM client for recommendations
+            verbose: Print progress
+        
+        Returns:
+            List of selected field names
+        """
+        console.clear()
+        console.print("\n[bold cyan]╔══════════════════════════════════════════════════╗[/bold cyan]")
+        console.print("[bold cyan]║            Field Selection                       ║[/bold cyan]")
+        console.print("[bold cyan]╚══════════════════════════════════════════════════╝[/bold cyan]\n")
+        
+        console.print(f"[bold]Object: [cyan]{metadata['label']}[/cyan] ({metadata['name']})[/bold]\n")
+        
+        # Get AI recommendations if available
+        recommended_fields = []
+        if llm_client:
+            try:
+                recommended_fields = self.get_field_recommendations(
+                    metadata, 
+                    llm_client, 
+                    purpose="display in AgentForce response",
+                    verbose=verbose
+                )
+            except Exception as e:
+                if verbose:
+                    console.print(f"[yellow]⚠️  Could not get AI recommendations: {e}[/yellow]")
+        
+        # Filter out system fields
+        fields = [
+            f for f in metadata['fields']
+            if not f['name'].startswith('System') and 
+            f['name'] not in ['Id', 'IsDeleted', 'CreatedDate', 'CreatedById', 
+                             'LastModifiedDate', 'LastModifiedById']
+        ]
+        
+        # Display fields with recommendations highlighted
+        console.print("[bold]Available Fields:[/bold]\n")
+        
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Select", width=6, justify="center")
+        table.add_column("#", style="dim", width=4)
+        table.add_column("API Name", style="cyan", width=25)
+        table.add_column("Label", style="white", width=25)
+        table.add_column("Type", style="yellow", width=15)
+        table.add_column("AI Rec", width=8, justify="center")
+        
+        for idx, field in enumerate(fields, 1):
+            is_recommended = field['name'] in recommended_fields
+            table.add_row(
+                "[ ]",
+                str(idx),
+                field['name'],
+                field['label'][:25],
+                field['type'],
+                "⭐" if is_recommended else ""
+            )
+        
+        console.print(table)
+        
+        # Selection options
+        console.print("\n[bold]Options:[/bold]")
+        console.print("  • Type field numbers separated by commas (e.g., 1,3,5-8)")
+        console.print("  • Type 'ai' to use AI recommendations")
+        console.print("  • Type 'all' to select all fields")
+        console.print("  • Type 'q' to cancel")
+        
+        choice = Prompt.ask("\n[bold]Select fields[/bold]")
+        
+        if choice.lower() == 'q':
+            return None
+        elif choice.lower() == 'ai':
+            if recommended_fields:
+                console.print(f"[green]✅ Using {len(recommended_fields)} AI recommended fields[/green]")
+                return recommended_fields
+            else:
+                console.print("[yellow]⚠️  No AI recommendations available[/yellow]")
+                return None
+        elif choice.lower() == 'all':
+            return [f['name'] for f in fields]
+        else:
+            # Parse selection
+            selected_indices = set()
+            
+            for part in choice.split(','):
+                part = part.strip()
+                if '-' in part:
+                    # Range
+                    try:
+                        start, end = part.split('-')
+                        selected_indices.update(range(int(start), int(end) + 1))
+                    except:
+                        console.print(f"[yellow]⚠️  Invalid range: {part}[/yellow]")
+                elif part.isdigit():
+                    selected_indices.add(int(part))
+            
+            # Convert indices to field names
+            selected_fields = []
+            for idx in sorted(selected_indices):
+                if 1 <= idx <= len(fields):
+                    selected_fields.append(fields[idx - 1]['name'])
+            
+            if selected_fields:
+                console.print(f"[green]✅ Selected {len(selected_fields)} fields[/green]")
+                return selected_fields
+            else:
+                console.print("[red]❌ No valid fields selected[/red]")
+                return None
