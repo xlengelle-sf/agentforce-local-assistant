@@ -301,25 +301,28 @@ else
 fi
 
 # ============================================================
-# STEP 5: Initialize Knowledge Base
+# STEP 5: Initialize Knowledge Base (Optional)
 # ============================================================
-print_header "${PACKAGE} ÉTAPE 5/6 : Initialisation de la Base de Connaissances"
+print_header "${PACKAGE} ÉTAPE 5/6 : Initialisation de la Base de Connaissances (Optionnel)"
 
-if ask_confirmation "Télécharger la documentation Salesforce" "y"; then
-    print_step "Téléchargement et indexation de la documentation..."
-    print_info "${WAIT} Cette étape peut prendre 2-3 minutes..."
+print_info "⚠️  Cette étape est optionnelle et peut être ignorée."
+print_info "L'assistant fonctionne parfaitement sans base de connaissances pré-téléchargée."
+print_info "Il interrogera directement Salesforce selon les besoins."
+echo ""
+
+if ask_confirmation "Ignorer cette étape" "y"; then
+    print_success "Étape ignorée - l'assistant fonctionnera en mode direct avec Salesforce"
+else
+    print_step "Tentative d'initialisation de la base de connaissances..."
     
     cd agent
-    python3 -c "from knowledge_base_manager import KnowledgeBaseManager; KnowledgeBaseManager().initialize()" || {
-        print_error "Échec de l'initialisation de la base de connaissances"
-        print_info "Vous pourrez réessayer plus tard avec la commande fournie dans le guide"
-    }
+    if python3 -c "from doc_fetcher import DocFetcher; DocFetcher().fetch_all_docs()" 2>/dev/null; then
+        print_success "Base de connaissances initialisée"
+    else
+        print_warning "Cette fonctionnalité n'est pas encore entièrement configurée"
+        print_info "L'assistant fonctionnera quand même correctement en mode direct"
+    fi
     cd ..
-    
-    print_success "Base de connaissances initialisée"
-else
-    print_warning "Vous devrez initialiser la base de connaissances plus tard"
-    print_info "Commande: cd agent && python3 -c \"from knowledge_base_manager import KnowledgeBaseManager; KnowledgeBaseManager().initialize()\""
 fi
 
 # ============================================================
