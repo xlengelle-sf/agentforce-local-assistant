@@ -4,7 +4,8 @@
 # Author: Xavier Lengellé
 # Description: Script interactif pour installer et configurer l'assistant local
 
-set -e  # Exit on error
+# Disable exit on error for dependency installation
+set +e
 
 # Colors for output
 RED='\033[0;31m'
@@ -86,6 +87,12 @@ ask_confirmation() {
 # Function to check if command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1
+}
+
+# Function to verify Python module is importable
+check_python_module() {
+    python3 -c "import $1" 2>/dev/null
+    return $?
 }
 
 # Main installation directory
@@ -212,17 +219,65 @@ cd "$INSTALL_DIR"
 # ============================================================
 print_header "${PACKAGE} ÉTAPE 3/6 : Installation des Dépendances Python"
 
-if ask_confirmation "Installer les dépendances Python (pip)" "y"; then
+if ask_confirmation "Installer les dépendances Python" "y"; then
     print_step "Installation des packages Python..."
+    
+    # Try to install dependencies
+    install_success=false
     
     # Check if requirements.txt exists
     if [ -f "requirements.txt" ]; then
-        pip install -r requirements.txt
-        print_success "Dépendances Python installées"
+        # Try normal installation first
+        print_info "Tentative d'installation via requirements.txt..."
+        if pip3 install -r requirements.txt >/dev/null 2>&1; then
+            install_success=true
+        else
+            # Try with --user flag
+            print_warning "Installation système échouée, tentative avec --user..."
+            if pip3 install --user -r requirements.txt >/dev/null 2>&1; then
+                install_success=true
+            fi
+        fi
     else
+        # Fallback: install critical packages manually
         print_warning "requirements.txt non trouvé, installation manuelle..."
-        pip install ollama rich
-        print_success "Packages de base installés"
+        if pip3 install ollama rich requests beautifulsoup4 >/dev/null 2>&1; then
+            install_success=true
+        else
+            if pip3 install --user ollama rich requests beautifulsoup4 >/dev/null 2>&1; then
+                install_success=true
+            fi
+        fi
+    fi
+    
+    # Verify installation by checking if modules are importable
+    echo ""
+    print_step "Vérification des modules installés..."
+    
+    modules_ok=true
+    critical_modules=("rich" "ollama" "requests" "bs4")
+    
+    for module in "${critical_modules[@]}"; do
+        if check_python_module "$module"; then
+            print_success "  Module $module: OK"
+        else
+            print_error "  Module $module: MANQUANT"
+            modules_ok=false
+        fi
+    done
+    
+    echo ""
+    
+    if [ "$modules_ok" = true ]; then
+        print_success "Toutes les dépendances Python sont correctement installées"
+    else
+        print_error "Certaines dépendances sont manquantes"
+        print_info "Essayez manuellement:"
+        print_info "  pip3 install --user ollama rich requests beautifulsoup4"
+        echo ""
+        if ! ask_confirmation "Voulez-vous continuer malgré tout" "n"; then
+            exit 1
+        fi
     fi
 else
     print_warning "Étape ignorée - assurez-vous que les dépendances sont installées"
@@ -313,13 +368,14 @@ echo ""
 if ask_confirmation "Ignorer cette étape" "y"; then
     print_success "Étape ignorée - l'assistant fonctionnera en mode direct avec Salesforce"
 else
-    print_step "Tentative d'initialisation de la base de connaissances..."
+    print_step "Initialisation de la base de connaissances..."
+    print_info "${WAIT} Cela peut prendre 2-3 minutes..."
     
     cd agent
-    if python3 -c "from doc_fetcher import DocFetcher; DocFetcher().fetch_all_docs()" 2>/dev/null; then
+    if python3 -c "from doc_fetcher import DocFetcher; DocFetcher().fetch_all_docs()" 2>&1; then
         print_success "Base de connaissances initialisée"
     else
-        print_warning "Cette fonctionnalité n'est pas encore entièrement configurée"
+        print_warning "Erreur lors de l'initialisation"
         print_info "L'assistant fonctionnera quand même correctement en mode direct"
     fi
     cd ..
@@ -371,6 +427,13 @@ if curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
     print_success "Service Ollama: OK"
 else
     print_warning "Service Ollama: NON DÉMARRÉ"
+fi
+
+# Check Python modules
+if check_python_module "rich"; then
+    print_success "Modules Python: OK"
+else
+    print_warning "Modules Python: À vérifier"
 fi
 
 # Check repository
