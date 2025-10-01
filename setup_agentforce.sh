@@ -89,14 +89,9 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# Function to verify Python module is importable
-check_python_module() {
-    python3 -c "import $1" 2>/dev/null
-    return $?
-}
-
 # Main installation directory
 INSTALL_DIR="$HOME/Code/agentforce-local-assistant"
+VENV_DIR="$INSTALL_DIR/venv"
 
 # ============================================================
 # WELCOME
@@ -215,42 +210,57 @@ fi
 cd "$INSTALL_DIR"
 
 # ============================================================
-# STEP 3: Install Python Dependencies
+# STEP 3: Create Virtual Environment & Install Dependencies
 # ============================================================
-print_header "${PACKAGE} ÉTAPE 3/6 : Installation des Dépendances Python"
+print_header "${PACKAGE} ÉTAPE 3/6 : Environnement Virtuel Python"
 
-if ask_confirmation "Installer les dépendances Python" "y"; then
-    print_step "Installation des packages Python..."
+if ask_confirmation "Créer un environnement virtuel Python" "y"; then
     
-    # Try to install dependencies
-    install_success=false
-    
-    # Check if requirements.txt exists
-    if [ -f "requirements.txt" ]; then
-        # Try normal installation first
-        print_info "Tentative d'installation via requirements.txt..."
-        if pip3 install -r requirements.txt >/dev/null 2>&1; then
-            install_success=true
+    # Create virtual environment
+    if [ -d "$VENV_DIR" ]; then
+        print_warning "Environnement virtuel existant détecté"
+        if ask_confirmation "Voulez-vous le recréer" "n"; then
+            print_step "Suppression de l'ancien environnement..."
+            rm -rf "$VENV_DIR"
+            print_step "Création d'un nouvel environnement virtuel..."
+            python3 -m venv "$VENV_DIR"
+            print_success "Environnement virtuel créé"
         else
-            # Try with --user flag
-            print_warning "Installation système échouée, tentative avec --user..."
-            if pip3 install --user -r requirements.txt >/dev/null 2>&1; then
-                install_success=true
-            fi
+            print_info "Utilisation de l'environnement existant"
         fi
     else
-        # Fallback: install critical packages manually
-        print_warning "requirements.txt non trouvé, installation manuelle..."
-        if pip3 install ollama rich requests beautifulsoup4 >/dev/null 2>&1; then
-            install_success=true
-        else
-            if pip3 install --user ollama rich requests beautifulsoup4 >/dev/null 2>&1; then
-                install_success=true
-            fi
-        fi
+        print_step "Création de l'environnement virtuel..."
+        python3 -m venv "$VENV_DIR"
+        print_success "Environnement virtuel créé"
     fi
     
-    # Verify installation by checking if modules are importable
+    # Activate virtual environment
+    print_step "Activation de l'environnement virtuel..."
+    source "$VENV_DIR/bin/activate"
+    print_success "Environnement virtuel activé"
+    
+    # Upgrade pip
+    print_step "Mise à jour de pip..."
+    pip install --upgrade pip > /dev/null 2>&1
+    
+    # Install dependencies
+    print_step "Installation des dépendances Python..."
+    
+    if [ -f "requirements.txt" ]; then
+        if pip install -r requirements.txt > /dev/null 2>&1; then
+            print_success "Dépendances installées depuis requirements.txt"
+        else
+            print_error "Échec de l'installation depuis requirements.txt"
+            print_step "Installation manuelle des packages critiques..."
+            pip install ollama rich requests beautifulsoup4 > /dev/null 2>&1
+        fi
+    else
+        print_warning "requirements.txt non trouvé"
+        print_step "Installation manuelle des packages critiques..."
+        pip install ollama rich requests beautifulsoup4 > /dev/null 2>&1
+    fi
+    
+    # Verify installation
     echo ""
     print_step "Vérification des modules installés..."
     
@@ -258,7 +268,7 @@ if ask_confirmation "Installer les dépendances Python" "y"; then
     critical_modules=("rich" "ollama" "requests" "bs4")
     
     for module in "${critical_modules[@]}"; do
-        if check_python_module "$module"; then
+        if python -c "import $module" 2>/dev/null; then
             print_success "  Module $module: OK"
         else
             print_error "  Module $module: MANQUANT"
@@ -272,15 +282,19 @@ if ask_confirmation "Installer les dépendances Python" "y"; then
         print_success "Toutes les dépendances Python sont correctement installées"
     else
         print_error "Certaines dépendances sont manquantes"
-        print_info "Essayez manuellement:"
-        print_info "  pip3 install --user ollama rich requests beautifulsoup4"
+        print_info "Essayez de relancer le script ou installez manuellement:"
+        print_info "  source $VENV_DIR/bin/activate"
+        print_info "  pip install ollama rich requests beautifulsoup4"
         echo ""
         if ! ask_confirmation "Voulez-vous continuer malgré tout" "n"; then
             exit 1
         fi
     fi
+    
 else
-    print_warning "Étape ignorée - assurez-vous que les dépendances sont installées"
+    print_warning "Environnement virtuel ignoré"
+    print_error "L'assistant nécessite un environnement virtuel sur macOS"
+    exit 1
 fi
 
 # ============================================================
@@ -372,7 +386,7 @@ else
     print_info "${WAIT} Cela peut prendre 2-3 minutes..."
     
     cd agent
-    if python3 -c "from doc_fetcher import DocFetcher; DocFetcher().fetch_all_docs()" 2>&1; then
+    if python -c "from doc_fetcher import DocFetcher; DocFetcher().fetch_all_docs()" 2>&1; then
         print_success "Base de connaissances initialisée"
     else
         print_warning "Erreur lors de l'initialisation"
@@ -382,11 +396,40 @@ else
 fi
 
 # ============================================================
-# STEP 6: Verify Installation
+# STEP 6: Create Launch Script
 # ============================================================
-print_header "${CHECK} ÉTAPE 6/6 : Vérification de l'Installation"
+print_header "${WRENCH} ÉTAPE 6/6 : Création du Script de Lancement"
 
-print_step "Vérification des composants..."
+print_step "Création du script run.sh..."
+
+cat > "$INSTALL_DIR/run.sh" << 'LAUNCH_SCRIPT'
+#!/bin/bash
+
+# AgentForce Local Assistant - Launch Script
+
+cd "$(dirname "$0")"
+
+# Activate virtual environment
+if [ -f "venv/bin/activate" ]; then
+    source venv/bin/activate
+else
+    echo "❌ Environnement virtuel non trouvé. Exécutez d'abord setup_agentforce.sh"
+    exit 1
+fi
+
+# Launch the assistant
+cd agent
+python main.py
+LAUNCH_SCRIPT
+
+chmod +x "$INSTALL_DIR/run.sh"
+print_success "Script de lancement créé: run.sh"
+
+# ============================================================
+# VERIFICATION & SUMMARY
+# ============================================================
+echo ""
+print_step "Vérification finale..."
 
 all_good=true
 
@@ -395,6 +438,14 @@ if command_exists python3; then
     print_success "Python: OK"
 else
     print_error "Python: MANQUANT"
+    all_good=false
+fi
+
+# Check Virtual Environment
+if [ -d "$VENV_DIR" ]; then
+    print_success "Environnement virtuel: OK"
+else
+    print_error "Environnement virtuel: MANQUANT"
     all_good=false
 fi
 
@@ -429,19 +480,11 @@ else
     print_warning "Service Ollama: NON DÉMARRÉ"
 fi
 
-# Check Python modules
-if check_python_module "rich"; then
+# Check Python modules (in venv)
+if python -c "import rich" 2>/dev/null; then
     print_success "Modules Python: OK"
 else
     print_warning "Modules Python: À vérifier"
-fi
-
-# Check repository
-if [ -d "$INSTALL_DIR/agent" ]; then
-    print_success "Repository: OK"
-else
-    print_error "Repository: MANQUANT"
-    all_good=false
 fi
 
 echo ""
@@ -451,12 +494,18 @@ if [ "$all_good" = true ]; then
     echo ""
     print_header "🎯 PROCHAINES ÉTAPES"
     echo ""
-    echo -e "${GREEN}Pour lancer l'assistant:${NC}"
-    echo -e "  cd $INSTALL_DIR/agent"
-    echo -e "  python3 main.py"
+    echo -e "${GREEN}Pour lancer l'assistant (méthode simple):${NC}"
+    echo -e "  cd $INSTALL_DIR"
+    echo -e "  ./run.sh"
     echo ""
-    echo -e "${BLUE}Pour plus d'informations, consultez le guide:${NC}"
-    echo -e "  $INSTALL_DIR/QUICKSTART.md"
+    echo -e "${GREEN}Pour lancer l'assistant (méthode manuelle):${NC}"
+    echo -e "  cd $INSTALL_DIR"
+    echo -e "  source venv/bin/activate"
+    echo -e "  cd agent"
+    echo -e "  python main.py"
+    echo ""
+    echo -e "${BLUE}Pour plus d'informations:${NC}"
+    echo -e "  cat $INSTALL_DIR/QUICKSTART.md"
     echo ""
 else
     print_error "Installation incomplète - certains composants sont manquants"
@@ -467,8 +516,8 @@ fi
 # Optional: Launch the assistant
 echo ""
 if ask_confirmation "Voulez-vous lancer l'assistant maintenant" "n"; then
-    cd "$INSTALL_DIR/agent"
-    python3 main.py
+    cd "$INSTALL_DIR"
+    ./run.sh
 fi
 
 print_success "Script terminé!"
