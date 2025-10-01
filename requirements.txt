@@ -1,7 +1,6 @@
 # Core dependencies
 requests==2.31.0
 beautifulsoup4==4.12.3
-lxml==5.1.0
 
 # LLM
 ollama==0.2.1
@@ -9,10 +8,6 @@ ollama==0.2.1
 # CLI Interface
 rich==13.7.1
 prompt-toolkit==3.0.43
-
-# Text processing
-scikit-learn==1.4.2
-numpy==1.26.4
 
 # Utils
 python-dotenv==1.0.1

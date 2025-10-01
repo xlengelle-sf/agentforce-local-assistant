@@ -11,12 +11,29 @@ console = Console()
 
 class DocFetcher:
     def __init__(self, config_path="config/settings.json"):
-        with open(config_path, 'r') as f:
+        # Get the repository root directory (parent of agent/)
+        script_dir = Path(__file__).parent
+        repo_root = script_dir.parent
+        
+        # Build absolute path to config file
+        full_config_path = repo_root / config_path
+        
+        if not full_config_path.exists():
+            raise FileNotFoundError(
+                f"Configuration file not found at: {full_config_path}\n"
+                f"Current directory: {Path.cwd()}\n"
+                f"Script directory: {script_dir}\n"
+                f"Repository root: {repo_root}"
+            )
+        
+        with open(full_config_path, 'r') as f:
             self.config = json.load(f)
         
         self.docs_urls = self.config['docs_urls']
-        self.raw_docs_dir = Path("knowledge_base/raw_docs")
-        self.processed_dir = Path("knowledge_base/processed")
+        
+        # Create knowledge_base directories relative to repo root
+        self.raw_docs_dir = repo_root / "knowledge_base" / "raw_docs"
+        self.processed_dir = repo_root / "knowledge_base" / "processed"
         
         self.raw_docs_dir.mkdir(parents=True, exist_ok=True)
         self.processed_dir.mkdir(parents=True, exist_ok=True)
