@@ -1,0 +1,13 @@
+{
+  "docs_urls": [
+    "https://developer.salesforce.com/docs/platform/lwc/guide/introduction.html",
+    "https://developer.salesforce.com/docs/platform/lwc/guide/create-components-introduction.html",
+    "https://developer.salesforce.com/docs/platform/lwc/guide/create-components-dom.html",
+    "https://developer.salesforce.com/docs/einstein/genai/guide/apex-agentforce.html",
+    "https://developer.salesforce.com/docs/einstein/genai/guide/agents-intro.html",
+    "https://developer.salesforce.com/docs/einstein/genai/guide/agents-actions.html",
+    "https://developer.salesforce.com/docs/einstein/genai/guide/agents-topics.html"
+  ],
+  "llm_model": "llama3.2",
+  "ollama_host": "http://localhost:11434"
+}
